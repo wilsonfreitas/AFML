@@ -130,3 +130,6 @@ dmypy.json
 
 .vscode/
 
+data/ES_Trades.csv
+data/ESU13.csv
+data/ESZ13.csv
