@@ -54,8 +54,11 @@ class TickTEvents:
         self.avg_imbalance = expected_imbalance
         self.threshold = self.avg_ticks*abs(self.avg_imbalance)
         self._statistics = []
+        self._thresholds = None
+        self._events = None
         self.imbalance = imbalance
         self.alpha = alpha
+        self.get_events()
 
     @property
     def statistics(self):
@@ -66,16 +69,32 @@ class TickTEvents:
         else:
             return pd.Series(self._statistics, index=self.imbalance.index)
 
+    @property
+    def thresholds(self):
+        if self._thresholds is None:
+            raise ValueError('threshold empty. get_events must be executed.')
+        else:
+            return self._thresholds
+
+    @property
+    def events(self):
+        if self._events is None:
+            raise ValueError('events empty. get_events must be executed.')
+        else:
+            return self._events
+
     def get_events(self):
         imb = self.imbalance.copy()
         imb[imb.isnull()] = 0
         _ = zip(imb.index, imb)
         lidx = self.imbalance.index[-1]  # last index
+        self._statistics = []
         res = [self.process_row(x, y, lidx, self.alpha) for x, y in _]
         res = [row for row in res if row is not None]
         res = pd.DataFrame(res, columns=['tevent', 'threshold'])
         res = res.set_index('tevent')
-        return res
+        self._thresholds = res['threshold']
+        self._events = res.index[:-1]
 
     def process_row(self, index, imbalance, last, alpha):
         raise NotImplementedError()
@@ -84,25 +103,27 @@ class TickTEvents:
 class DollarVolumeTEvents(TickTEvents):
     def __init__(self, imbalance, volume, expected_window, expected_imbalance,
                  alpha):
-        super().__init__(imbalance, expected_window, expected_imbalance, alpha)
         self.volume = volume
+        super().__init__(imbalance, expected_window, expected_imbalance, alpha)
 
     def get_events(self):
         imb = self.imbalance.copy()
         imb[imb.isnull()] = 0
         _ = zip(imb.index, imb, self.volume)
         lidx = self.imbalance.index[-1]  # last index
+        self._statistics = []
         res = [self.process_row(x, y, z, lidx, self.alpha) for x, y, z in _]
         res = [row for row in res if row is not None]
         res = pd.DataFrame(res, columns=['tevent', 'threshold'])
         res = res.set_index('tevent')
-        return res
+        self._thresholds = res['threshold']
+        self._events = res.index[:-1]
 
 
 class TickImbalanceEvents(TickTEvents):
     def __init__(self, imbalance, expected_window, expected_imbalance, alpha):
-        super().__init__(imbalance, expected_window, expected_imbalance, alpha)
         self.cum_imbalance = 0
+        super().__init__(imbalance, expected_window, expected_imbalance, alpha)
 
     def process_row(self, index, imbalance, last, alpha):
         # _imbalance = 0 if imbalance_isnull else imbalance
@@ -128,9 +149,9 @@ class TickImbalanceEvents(TickTEvents):
 
 class TickRunsEvents(TickTEvents):
     def __init__(self, imbalance, expected_window, expected_imbalance, alpha):
-        super().__init__(imbalance, expected_window, expected_imbalance, alpha)
         self.cum_imbalance_u = 0
         self.cum_imbalance_d = 0
+        super().__init__(imbalance, expected_window, expected_imbalance, alpha)
 
     def process_row(self, index, imbalance, last, alpha):
         # _imbalance = 0 if imbalance_isnull else imbalance
@@ -162,9 +183,9 @@ class TickRunsEvents(TickTEvents):
 class DollarVolumeImbalanceEvents(DollarVolumeTEvents):
     def __init__(self, imbalance, volume, expected_window, expected_imbalance,
                  alpha):
+        self.cum_imbalance = 0
         super().__init__(imbalance, volume, expected_window,
                          expected_imbalance, alpha)
-        self.cum_imbalance = 0
 
     def process_row(self, index, imbalance, volume, last, alpha):
         # _imbalance = 0 if imbalance_isnull else imbalance
@@ -192,8 +213,6 @@ class DollarVolumeImbalanceEvents(DollarVolumeTEvents):
 class DollarVolumeRunsEvents(DollarVolumeTEvents):
     def __init__(self, imbalance, volume, expected_window, expected_imbalance,
                  expected_volume_up, expected_volume_down, alpha):
-        super().__init__(imbalance, volume, expected_window,
-                         expected_imbalance, alpha)
         self.cum_imbalance_u = 0
         self.cum_imbalance_d = 0
         self.avg_volume_u = expected_volume_up
@@ -203,6 +222,8 @@ class DollarVolumeRunsEvents(DollarVolumeTEvents):
                                             (1 - p_b_up)*self.avg_volume_d)
         self.volume_u = []
         self.volume_d = []
+        super().__init__(imbalance, volume, expected_window,
+                         expected_imbalance, alpha)
 
     def process_row(self, index, imbalance, volume, last, alpha):
         self.ticks += 1
@@ -239,3 +260,54 @@ class DollarVolumeRunsEvents(DollarVolumeTEvents):
             self.volume_u = []
             self.volume_d = []
         return res
+
+
+def compute_events(df, n, grp_idx_func):
+    df_aux = df.assign(
+        grp_idx=grp_idx_func(df),
+        grp=lambda row: row.grp_idx // n
+    )
+    s_aux = df_aux.grp.diff()
+    return s_aux[s_aux == 1].index
+
+
+def get_tick_events(df, n_ticks):
+    return compute_events(df, n_ticks,
+                          lambda df: list(range(df.shape[0])))
+
+
+def get_volume_events(df, n_volume):
+    return compute_events(df, n_volume,
+                          lambda df: df['volume'].cumsum())
+
+
+def get_dollar_events(df, n_dollar):
+    return compute_events(df, n_dollar,
+                          lambda df: (df['volume']*df['price']).cumsum())
+
+
+def bars_sampling(df, tevents):
+    aux = pd.Series(0, index=df.index)
+    aux[tevents] = 1
+    aux = np.cumsum(aux)
+    return create_bars(df, aux, compute_bar)
+
+
+def _bars_sampling(df, n, events_func):
+    return bars_sampling(df, events_func(df, n))
+
+
+def tick_bars_sampling(df, n_ticks):
+    return bars_sampling(df, get_tick_events(df, n_ticks))
+
+
+def volume_bars_sampling(df, n_volume):
+    return bars_sampling(df, get_volume_events(df, n_volume))
+
+
+def dollar_bars_sampling(df, n_dollar):
+    return bars_sampling(df, get_dollar_events(df, n_dollar))
+
+
+def time_bars_sampling(df, freq):
+    return create_bars(df, pd.Grouper(key='time', freq=freq), compute_bar)
