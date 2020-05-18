@@ -58,7 +58,6 @@ class TickTEvents:
         self._events = None
         self.imbalance = imbalance
         self.alpha = alpha
-        self.get_events()
 
     @property
     def statistics(self):
@@ -103,8 +102,8 @@ class TickTEvents:
 class DollarVolumeTEvents(TickTEvents):
     def __init__(self, imbalance, volume, expected_window, expected_imbalance,
                  alpha):
-        self.volume = volume
         super().__init__(imbalance, expected_window, expected_imbalance, alpha)
+        self.volume = volume
 
     def get_events(self):
         imb = self.imbalance.copy()
@@ -122,8 +121,9 @@ class DollarVolumeTEvents(TickTEvents):
 
 class TickImbalanceEvents(TickTEvents):
     def __init__(self, imbalance, expected_window, expected_imbalance, alpha):
-        self.cum_imbalance = 0
         super().__init__(imbalance, expected_window, expected_imbalance, alpha)
+        self.cum_imbalance = 0
+        self.get_events()
 
     def process_row(self, index, imbalance, last, alpha):
         # _imbalance = 0 if imbalance_isnull else imbalance
@@ -149,9 +149,10 @@ class TickImbalanceEvents(TickTEvents):
 
 class TickRunsEvents(TickTEvents):
     def __init__(self, imbalance, expected_window, expected_imbalance, alpha):
+        super().__init__(imbalance, expected_window, expected_imbalance, alpha)
         self.cum_imbalance_u = 0
         self.cum_imbalance_d = 0
-        super().__init__(imbalance, expected_window, expected_imbalance, alpha)
+        self.get_events()
 
     def process_row(self, index, imbalance, last, alpha):
         # _imbalance = 0 if imbalance_isnull else imbalance
@@ -183,9 +184,10 @@ class TickRunsEvents(TickTEvents):
 class DollarVolumeImbalanceEvents(DollarVolumeTEvents):
     def __init__(self, imbalance, volume, expected_window, expected_imbalance,
                  alpha):
-        self.cum_imbalance = 0
         super().__init__(imbalance, volume, expected_window,
                          expected_imbalance, alpha)
+        self.cum_imbalance = 0
+        self.get_events()
 
     def process_row(self, index, imbalance, volume, last, alpha):
         # _imbalance = 0 if imbalance_isnull else imbalance
@@ -213,6 +215,8 @@ class DollarVolumeImbalanceEvents(DollarVolumeTEvents):
 class DollarVolumeRunsEvents(DollarVolumeTEvents):
     def __init__(self, imbalance, volume, expected_window, expected_imbalance,
                  expected_volume_up, expected_volume_down, alpha):
+        super().__init__(imbalance, volume, expected_window,
+                         expected_imbalance, alpha)
         self.cum_imbalance_u = 0
         self.cum_imbalance_d = 0
         self.avg_volume_u = expected_volume_up
@@ -222,8 +226,7 @@ class DollarVolumeRunsEvents(DollarVolumeTEvents):
                                             (1 - p_b_up)*self.avg_volume_d)
         self.volume_u = []
         self.volume_d = []
-        super().__init__(imbalance, volume, expected_window,
-                         expected_imbalance, alpha)
+        self.get_events()
 
     def process_row(self, index, imbalance, volume, last, alpha):
         self.ticks += 1
